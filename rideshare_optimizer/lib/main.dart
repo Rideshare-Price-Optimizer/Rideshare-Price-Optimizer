@@ -1,182 +1,419 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 
-// Entry point of the Flutter application
 void main() {
   runApp(const RideshareOptimizerApp());
 }
 
-// Root widget of the app - StatelessWidget since it won't change after creation
 class RideshareOptimizerApp extends StatelessWidget {
-  // Constructor with optional named parameter 'key' for widget identification
   const RideshareOptimizerApp({super.key});
 
   @override
-  // Build method defines how the widget looks and behaves
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Rideshare Price Optimizer',
-      // ThemeData configures the overall visual theme of the app
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // ColorScheme defines the app's color palette
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color.fromARGB(174, 76, 229, 86),
-          brightness: Brightness.dark,
+          seedColor: const Color(0xFF2E7D32), // Forest green as seed color
+          brightness: Brightness.light,
         ),
-        // Enable Material Design 3 features
         useMaterial3: true,
-        // Configure app bar appearance
-        appBarTheme: const AppBarTheme(
-          centerTitle: true,
+        // Enhanced typography
+        textTheme: const TextTheme(
+          bodyLarge: TextStyle(fontSize: 16.0, fontWeight: FontWeight.w400),
+          bodyMedium: TextStyle(fontSize: 14.0, fontWeight: FontWeight.w400),
+          labelLarge: TextStyle(fontSize: 16.0, fontWeight: FontWeight.w500),
+        ),
+        // Custom card theme
+        cardTheme: CardTheme(
           elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
       ),
-      // Set the home screen widget
       home: const PriceOptimizerScreen(),
     );
   }
 }
 
-// Main screen widget - StatefulWidget since it will change based on user interaction
 class PriceOptimizerScreen extends StatefulWidget {
   const PriceOptimizerScreen({super.key});
 
   @override
-  // Create the mutable state for this widget
   State<PriceOptimizerScreen> createState() => _PriceOptimizerScreenState();
 }
 
-// State class that holds the mutable data for the PriceOptimizerScreen
 class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
-  // State variables to track search status and destination input
-  bool _isSearching = false;
-  String _destination = '';
-
-  // Method to handle location search
-  void _searchNearbyLocations() {
-    // setState() tells Flutter to rebuild the UI with new state
-    setState(() {
-      _isSearching = true;
-    });
-    // Placeholder for actual search implementation
-    Future.delayed(const Duration(seconds: 2), () {
-      setState(() {
-        _isSearching = false;
-      });
-    });
+  String? _selectedDestination;
+  final TextEditingController _searchController = TextEditingController();
+  final MapController _mapController = MapController();
+  LatLng _currentLocation = const LatLng(37.7749, -122.4194); // Default to San Francisco
+  
+  @override
+  void initState() {
+    super.initState();
+    _getCurrentLocation();
   }
 
   @override
-  Widget build(BuildContext context) {
-    // Scaffold provides the basic material design layout structure
-    return Scaffold(
-      // App bar at the top of the screen
-      appBar: AppBar(
-        title: const Text('Price Optimizer'),
-        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-      ),
-      // Main body content
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        // Column arranges children vertically
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Search input card
-            Card(
-              elevation: 4,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      
+      if (permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always) {
+        Position position = await Geolocator.getCurrentPosition();
+        setState(() {
+          _currentLocation = LatLng(position.latitude, position.longitude);
+        });
+        _mapController.move(_currentLocation, 15);
+      }
+    } catch (e) {
+      // Handle location errors or use default location
+      print('Error getting location: $e');
+    }
+  }
+
+  void _openSearchSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return GestureDetector(
+          onTap: () {
+            FocusScope.of(context).unfocus();
+            Navigator.pop(context);
+            setState(() {
+              if (_selectedDestination != null) {
+                _searchController.text = _selectedDestination!;
+              }
+            });
+          },
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.6,
+            minChildSize: 0.4,
+            maxChildSize: 0.9,
+            builder: (context, scrollController) {
+              return Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(
+                    top: Radius.circular(28),
+                  ),
+                ),
                 child: Column(
                   children: [
-                    // Text input field for destination
-                    TextField(
-                      decoration: InputDecoration(
-                        labelText: 'Where to?',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        prefixIcon: const Icon(Icons.location_on),
+                    Container(
+                      margin: const EdgeInsets.only(top: 12, bottom: 8),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
                       ),
-                      // Update destination state when text changes
-                      onChanged: (value) {
-                        setState(() {
-                          _destination = value;
-                        });
-                      },
                     ),
-                    const SizedBox(height: 16),
-                    // Search button
-                    ElevatedButton.icon(
-                      // Disable button if destination is empty
-                      onPressed: _destination.isEmpty ? null : _searchNearbyLocations,
-                      icon: const Icon(Icons.search),
-                      label: const Text('Find Better Prices'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 12,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      child: TextField(
+                        controller: _searchController,
+                        autofocus: true,
+                        decoration: InputDecoration(
+                          hintText: 'Where to?',
+                          hintStyle: TextStyle(color: Colors.grey[600]),
+                          prefixIcon: Icon(Icons.search, color: Colors.grey[600]),
+                          suffixIcon: IconButton(
+                            icon: Icon(Icons.clear, color: Colors.grey[600]),
+                            onPressed: () => _searchController.clear(),
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide.none,
+                          ),
+                          filled: true,
+                          fillColor: Colors.grey[100],
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 16,
+                          ),
                         ),
+                        onChanged: (value) {
+                          // Implement search functionality here
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        controller: scrollController,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: 10,
+                        itemBuilder: (context, index) {
+                          return _buildDestinationCard(
+                            'Destination ${index + 1}',
+                            '${(index + 1) * 2.5} km',
+                            (index + 1) * 5,
+                            onTap: () => _selectDestination('Destination ${index + 1}'),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    ).then((_) {
+      // Update search bar text when bottom sheet is closed
+      if (_selectedDestination != null) {
+        _searchController.text = _selectedDestination!;
+      }
+    });
+  }
+
+  Widget _buildDestinationCard(String name, String distance, double price, {required VoidCallback onTap}) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.place,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      distance,
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 14,
                       ),
                     ),
                   ],
                 ),
               ),
+              Text(
+                '\$${price.toStringAsFixed(2)}',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _selectDestination(String destination) {
+    setState(() {
+      _selectedDestination = destination;
+      _searchController.text = destination;
+    });
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          // Map implementation using Flutter Map
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _currentLocation,
+              initialZoom: 15,
             ),
-            const SizedBox(height: 16),
-            // Results area - expands to fill remaining space
-            Expanded(
-              // Conditional rendering based on state
-              child: _isSearching
-                  ? const Center(
-                      // Loading indicator when searching
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 16),
-                          Text('Searching for better prices...')
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.app',
+              ),
+              // Current location marker
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: _currentLocation,
+                    width: 40,
+                    height: 40,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
                         ],
                       ),
-                    )
-                  : _destination.isEmpty
-                      ? // Show helper text when no destination entered
-                        const Center(
-                          child: Text(
-                            'Enter a destination to find better prices',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        )
-                      : // Show results list when search is complete
-                        Card(
-                          elevation: 4,
-                          child: ListView.builder(
-                            padding: const EdgeInsets.all(8),
-                            itemCount: 5, // Placeholder count
-                            // Build list items dynamically
-                            itemBuilder: (context, index) {
-                              return ListTile(
-                                leading: const Icon(Icons.directions_walk),
-                                title: Text(
-                                  'Option ${index + 1}',
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                subtitle: Text(
-                                  'Walk ${index + 2} min to save \$${(index + 1) * 2}.00',
-                                ),
-                                trailing: const Icon(Icons.arrow_forward_ios),
-                                onTap: () {
-                                  // TODO: Implement option selection
-                                },
-                              );
-                            },
-                          ),
-                        ),
+                      child: const Icon(
+                        Icons.my_location,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          // Settings button
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 16,
+            right: 16,
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(16),
+              child: InkWell(
+                onTap: () {
+                  // Navigate to settings
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Icon(
+                    Icons.settings,
+                    color: Colors.black87,
+                    size: 24,
+                  ),
+                ),
+              ),
             ),
-          ],
-        ),
+          ),
+          // Search bar
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(context).padding.bottom + 16,
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(16),
+              child: InkWell(
+                onTap: _openSearchSheet,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.search, color: Colors.grey[600]),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _selectedDestination ?? 'Where to?',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Selected destination overlay
+          if (_selectedDestination != null)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 16,
+              left: 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.directions,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Route to $_selectedDestination',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => setState(() => _selectedDestination = null),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

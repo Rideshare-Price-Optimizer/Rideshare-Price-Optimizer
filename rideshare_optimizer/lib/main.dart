@@ -2,9 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:provider/provider.dart';
+import 'theme_provider.dart';
+import 'settings_page.dart';
 
 void main() {
-  runApp(const RideshareOptimizerApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => ThemeProvider(),
+      child: const RideshareOptimizerApp(),
+    ),
+  );
 }
 
 class RideshareOptimizerApp extends StatelessWidget {
@@ -12,30 +20,15 @@ class RideshareOptimizerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Rideshare Price Optimizer',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2E7D32), // Forest green as seed color
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-        // Enhanced typography
-        textTheme: const TextTheme(
-          bodyLarge: TextStyle(fontSize: 16.0, fontWeight: FontWeight.w400),
-          bodyMedium: TextStyle(fontSize: 14.0, fontWeight: FontWeight.w400),
-          labelLarge: TextStyle(fontSize: 16.0, fontWeight: FontWeight.w500),
-        ),
-        // Custom card theme
-        cardTheme: CardTheme(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-      ),
-      home: const PriceOptimizerScreen(),
+    return Consumer<ThemeProvider>(
+      builder: (context, themeProvider, child) {
+        return MaterialApp(
+          title: 'Rideshare Price Optimizer',
+          debugShowCheckedModeBanner: false,
+          theme: themeProvider.theme,
+          home: const PriceOptimizerScreen(),
+        );
+      },
     );
   }
 }
@@ -92,88 +85,107 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return GestureDetector(
-          onTap: () {
-            FocusScope.of(context).unfocus();
-            Navigator.pop(context);
-            setState(() {
-              if (_selectedDestination != null) {
-                _searchController.text = _selectedDestination!;
-              }
-            });
-          },
-          child: DraggableScrollableSheet(
-            initialChildSize: 0.6,
-            minChildSize: 0.4,
-            maxChildSize: 0.9,
-            builder: (context, scrollController) {
-              return Container(
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(
-                    top: Radius.circular(28),
-                  ),
+        return Stack(
+          children: [
+            // Add a transparent background that handles taps
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () {
+                  FocusScope.of(context).unfocus();
+                  Navigator.pop(context);
+                  setState(() {
+                    if (_selectedDestination != null) {
+                      _searchController.text = _selectedDestination!;
+                    }
+                  });
+                },
+                // Make sure the gesture detector is hit-testable
+                behavior: HitTestBehavior.opaque,
+                // Use a transparent color to make the entire area tappable
+                child: Container(
+                  color: Colors.transparent,
                 ),
-                child: Column(
-                  children: [
-                    Container(
-                      margin: const EdgeInsets.only(top: 12, bottom: 8),
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+              ),
+            ),
+            // Your existing DraggableScrollableSheet
+            DraggableScrollableSheet(
+              initialChildSize: 0.6,
+              minChildSize: 0.4,
+              maxChildSize: 0.9,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(28),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                      child: TextField(
-                        controller: _searchController,
-                        autofocus: true,
-                        decoration: InputDecoration(
-                          hintText: 'Where to?',
-                          hintStyle: TextStyle(color: Colors.grey[600]),
-                          prefixIcon: Icon(Icons.search, color: Colors.grey[600]),
-                          suffixIcon: IconButton(
-                            icon: Icon(Icons.clear, color: Colors.grey[600]),
-                            onPressed: () => _searchController.clear(),
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide.none,
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey[100],
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 16,
+                  ),
+                  // Wrap the content in a GestureDetector to prevent taps from reaching the background
+                  child: GestureDetector(
+                    onTap: () {},
+                    behavior: HitTestBehavior.opaque,
+                    child: Column(
+                      children: [
+                        Container(
+                          margin: const EdgeInsets.only(top: 12, bottom: 8),
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[300],
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
-                        onChanged: (value) {
-                          // Implement search functionality here
-                        },
-                      ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                          child: TextField(
+                            controller: _searchController,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              hintText: 'Where to?',
+                              hintStyle: TextStyle(color: Colors.grey[600]),
+                              prefixIcon: Icon(Icons.search, color: Colors.grey[600]),
+                              suffixIcon: IconButton(
+                                icon: Icon(Icons.clear, color: Colors.grey[600]),
+                                onPressed: () => _searchController.clear(),
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide.none,
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey[100],
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 16,
+                              ),
+                            ),
+                            onChanged: (value) {
+                              // Implement search functionality here
+                            },
+                          ),
+                        ),
+                        Expanded(
+                          child: ListView.builder(
+                            controller: scrollController,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            itemCount: 10,
+                            itemBuilder: (context, index) {
+                              return _buildDestinationCard(
+                                'Destination ${index + 1}',
+                                '${(index + 1) * 2.5} km',
+                                (index + 1) * 5,
+                                onTap: () => _selectDestination('Destination ${index + 1}'),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ),
-                    Expanded(
-                      child: ListView.builder(
-                        controller: scrollController,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: 10,
-                        itemBuilder: (context, index) {
-                          return _buildDestinationCard(
-                            'Destination ${index + 1}',
-                            '${(index + 1) * 2.5} km',
-                            (index + 1) * 5,
-                            onTap: () => _selectDestination('Destination ${index + 1}'),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
+                  ),
+                );
+              },
+            ),
+          ],
         );
       },
     ).then((_) {
@@ -308,7 +320,10 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
               borderRadius: BorderRadius.circular(16),
               child: InkWell(
                 onTap: () {
-                  // Navigate to settings
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SettingsPage()),
+                  );
                 },
                 borderRadius: BorderRadius.circular(16),
                 child: Container(

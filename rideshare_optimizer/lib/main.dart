@@ -3,8 +3,10 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import 'theme_provider.dart';
 import 'settings_page.dart';
+import 'services/places_service.dart';
 
 void main() {
   runApp(
@@ -46,6 +48,13 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   final MapController _mapController = MapController();
   LatLng _currentLocation = const LatLng(37.7749, -122.4194); // Default to San Francisco
   
+  // New properties for search functionality
+  final PlacesService _placesService = PlacesService();
+  List<NominatimPlace> _searchResults = [];
+  bool _isLoading = false;
+  Timer? _debounceTimer;
+  LatLng? _destinationLocation; // To store the selected location coordinates
+  
   @override
   void initState() {
     super.initState();
@@ -55,6 +64,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -80,112 +90,169 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   }
 
   void _openSearchSheet() {
+    // Reset search results
+    setState(() {
+      _searchResults = [];
+      _isLoading = false;
+    });
+    
     showModalBottomSheet(
-      context: context,
+      context: context, 
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return Stack(
-          children: [
-            // Add a transparent background that handles taps
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () {
-                  FocusScope.of(context).unfocus();
-                  Navigator.pop(context);
-                  setState(() {
-                    if (_selectedDestination != null) {
-                      _searchController.text = _selectedDestination!;
-                    }
-                  });
-                },
-                // Make sure the gesture detector is hit-testable
-                behavior: HitTestBehavior.opaque,
-                // Use a transparent color to make the entire area tappable
-                child: Container(
-                  color: Colors.transparent,
-                ),
-              ),
-            ),
-            // Your existing DraggableScrollableSheet
-            DraggableScrollableSheet(
-              initialChildSize: 0.6,
-              minChildSize: 0.4,
-              maxChildSize: 0.9,
-              builder: (context, scrollController) {
-                return Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(28),
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Stack(
+              children: [
+                // Add a transparent background that handles taps
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () {
+                      FocusScope.of(context).unfocus();
+                      Navigator.pop(context);
+                      setState(() {
+                        if (_selectedDestination != null) {
+                          _searchController.text = _selectedDestination!;
+                        }
+                      });
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      color: Colors.transparent,
                     ),
                   ),
-                  // Wrap the content in a GestureDetector to prevent taps from reaching the background
-                  child: GestureDetector(
-                    onTap: () {},
-                    behavior: HitTestBehavior.opaque,
-                    child: Column(
-                      children: [
-                        Container(
-                          margin: const EdgeInsets.only(top: 12, bottom: 8),
-                          width: 40,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.grey[300],
-                            borderRadius: BorderRadius.circular(2),
-                          ),
+                ),
+                DraggableScrollableSheet(
+                  initialChildSize: 0.6,
+                  minChildSize: 0.4,
+                  maxChildSize: 0.9,
+                  builder: (context, scrollController) {
+                    return Container(
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(28),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                          child: TextField(
-                            controller: _searchController,
-                            autofocus: true,
-                            decoration: InputDecoration(
-                              hintText: 'Where to?',
-                              hintStyle: TextStyle(color: Colors.grey[600]),
-                              prefixIcon: Icon(Icons.search, color: Colors.grey[600]),
-                              suffixIcon: IconButton(
-                                icon: Icon(Icons.clear, color: Colors.grey[600]),
-                                onPressed: () => _searchController.clear(),
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey[100],
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 16,
+                      ),
+                      child: GestureDetector(
+                        onTap: () {},
+                        behavior: HitTestBehavior.opaque,
+                        child: Column(
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 12, bottom: 8),
+                              width: 40,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[300],
+                                borderRadius: BorderRadius.circular(2),
                               ),
                             ),
-                            onChanged: (value) {
-                              // Implement search functionality here
-                            },
-                          ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                              child: TextField(
+                                controller: _searchController,
+                                autofocus: true,
+                                decoration: InputDecoration(
+                                  hintText: 'Where to?',
+                                  hintStyle: TextStyle(color: Colors.grey[600]),
+                                  prefixIcon: Icon(Icons.search, color: Colors.grey[600]),
+                                  suffixIcon: IconButton(
+                                    icon: Icon(Icons.clear, color: Colors.grey[600]),
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      setModalState(() {
+                                        _searchResults = [];
+                                      });
+                                    },
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  filled: true,
+                                  fillColor: Colors.grey[100],
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 16,
+                                  ),
+                                ),
+                                onChanged: (value) {
+                                  // Debounce search to avoid API rate limiting
+                                  if (_debounceTimer?.isActive ?? false) {
+                                    _debounceTimer!.cancel();
+                                  }
+                                  
+                                  _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+                                    if (value.trim().isNotEmpty) {
+                                      setModalState(() {
+                                        _isLoading = true;
+                                      });
+                                      
+                                      // Pass user's current location to improve proximity-based results
+                                      _placesService.searchPlaces(value, userLocation: _currentLocation).then((results) {
+                                        setModalState(() {
+                                          _searchResults = results;
+                                          _isLoading = false;
+                                        });
+                                      }).catchError((error) {
+                                        debugPrint('Search error: $error');
+                                        setModalState(() {
+                                          _isLoading = false;
+                                        });
+                                      });
+                                    } else {
+                                      setModalState(() {
+                                        _searchResults = [];
+                                      });
+                                    }
+                                  });
+                                },
+                              ),
+                            ),
+                            Expanded(
+                              child: _isLoading
+                                ? const Center(child: CircularProgressIndicator())
+                                : _searchController.text.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        'Search for a destination',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                    )
+                                  : _searchResults.isEmpty
+                                    ? Center(
+                                        child: Text(
+                                          'No results found',
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                      )
+                                    : ListView.builder(
+                                        controller: scrollController,
+                                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                                        itemCount: _searchResults.length,
+                                        itemBuilder: (context, index) {
+                                          final place = _searchResults[index];
+                                          return _buildPlaceItem(place, context);
+                                        },
+                                      ),
+                            ),
+                          ],
                         ),
-                        Expanded(
-                          child: ListView.builder(
-                            controller: scrollController,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            itemCount: 10,
-                            itemBuilder: (context, index) {
-                              return _buildDestinationCard(
-                                'Destination ${index + 1}',
-                                '${(index + 1) * 2.5} km',
-                                (index + 1) * 5,
-                                onTap: () => _selectDestination('Destination ${index + 1}'),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            );
+          },
         );
       },
     ).then((_) {
@@ -196,11 +263,23 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     });
   }
 
-  Widget _buildDestinationCard(String name, String distance, double price, {required VoidCallback onTap}) {
+  // New method to build place item
+  Widget _buildPlaceItem(NominatimPlace place, BuildContext context) {
+    String? distanceText;
+    if (place.distance != null) {
+      if (place.distance! < 1) {
+        // Convert to meters for distances less than 1km
+        int meters = (place.distance! * 1000).round();
+        distanceText = '$meters m';
+      } else {
+        distanceText = '${place.distance!.toStringAsFixed(1)} km';
+      }
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
-        onTap: onTap,
+        onTap: () => _selectPlace(place),
         borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -223,29 +302,38 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      name,
+                      _getMainText(place.displayName),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      distance,
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 14,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _getSecondaryText(place.displayName),
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (distanceText != null)
+                          Text(
+                            distanceText,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.primary,
+                              fontWeight: FontWeight.w500,
+                              fontSize: 14,
+                            ),
+                          ),
+                      ],
                     ),
                   ],
-                ),
-              ),
-              Text(
-                '\$${price.toStringAsFixed(2)}',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.primary,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
@@ -255,12 +343,50 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     );
   }
 
-  void _selectDestination(String destination) {
+  // Helper methods for formatting place names
+  String _getMainText(String displayName) {
+    final parts = displayName.split(',');
+    if (parts.isNotEmpty) {
+      return parts[0].trim();
+    }
+    return displayName;
+  }
+
+  String _getSecondaryText(String displayName) {
+    final parts = displayName.split(',');
+    if (parts.length > 1) {
+      return parts.sublist(1).join(',').trim();
+    }
+    return '';
+  }
+
+  void _selectPlace(NominatimPlace place) {
+    final latLng = LatLng(place.lat, place.lon);
+    
+    // Debug output
+    debugPrint('Selected place: ${place.displayName}');
+    debugPrint('Latitude: ${place.lat}, Longitude: ${place.lon}');
+    
     setState(() {
-      _selectedDestination = destination;
-      _searchController.text = destination;
+      _selectedDestination = place.displayName;
+      _destinationLocation = latLng;
     });
+    
+    // Move map to selected location
+    _mapController.move(latLng, 15);
+    
+    // Close the bottom sheet
     Navigator.pop(context);
+    
+    // Show debug info in a snackbar
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Selected: ${place.displayName}\nLat: ${place.lat}, Lng: ${place.lon}',
+        ),
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   @override
@@ -280,7 +406,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.app',
               ),
-              // Current location marker
+              // Marker layer with both current location and destination (if selected)
               MarkerLayer(
                 markers: [
                   Marker(
@@ -307,6 +433,32 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                       ),
                     ),
                   ),
+                  // Add destination marker if available
+                  if (_destinationLocation != null)
+                    Marker(
+                      point: _destinationLocation!,
+                      width: 40,
+                      height: 40,
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.place,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ],

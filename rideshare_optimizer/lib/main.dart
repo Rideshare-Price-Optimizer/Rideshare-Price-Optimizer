@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
@@ -7,8 +8,17 @@ import 'dart:async';
 import 'theme_provider.dart';
 import 'settings_page.dart';
 import 'services/places_service.dart';
+import 'services/uber_service.dart';
+import 'services/config.dart';
 
-void main() {
+void main() async {
+  // Ensure Flutter bindings are initialized
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize config (this is fast now, no file loading)
+  await Config().load();
+  debugPrint('Configuration initialized in main');
+  
   runApp(
     ChangeNotifierProvider(
       create: (_) => ThemeProvider(),
@@ -50,11 +60,16 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   
   // New properties for search functionality
   final PlacesService _placesService = PlacesService();
+  final UberService _uberService = UberService(); // Add this line
   List<NominatimPlace> _searchResults = [];
   bool _isLoading = false;
   Timer? _debounceTimer;
   LatLng? _destinationLocation; // To store the selected location coordinates
   
+  // Add this property to store Uber quotes
+  List<UberDeliveryQuote>? _uberQuotes;
+  bool _fetchingUberQuotes = false;
+
   @override
   void initState() {
     super.initState();
@@ -65,6 +80,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   void dispose() {
     _searchController.dispose();
     _debounceTimer?.cancel();
+    _uberService.dispose(); // Make sure to dispose of the HTTP client
     super.dispose();
   }
 
@@ -370,6 +386,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     setState(() {
       _selectedDestination = place.displayName;
       _destinationLocation = latLng;
+      _uberQuotes = null; // Reset previous quotes
     });
     
     // Move map to selected location
@@ -378,15 +395,71 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     // Close the bottom sheet
     Navigator.pop(context);
     
-    // Show debug info in a snackbar
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Selected: ${place.displayName}\nLat: ${place.lat}, Lng: ${place.lon}',
+    // Fetch Uber quotes
+    _getUberQuotes();
+  }
+
+  // Updated method to fetch Uber quotes with better error handling
+  Future<void> _getUberQuotes() async {
+    if (_destinationLocation == null) return;
+    
+    setState(() {
+      _fetchingUberQuotes = true;
+    });
+    
+    try {
+      // Show that we're trying to fetch quotes
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Fetching Uber ride prices...'),
+          duration: Duration(seconds: 2),
         ),
-        duration: const Duration(seconds: 4),
-      ),
-    );
+      );
+      
+      final quotes = await _uberService.getDeliveryQuotes(
+        pickupLocation: _currentLocation,
+        dropoffLocation: _destinationLocation!,
+      );
+      
+      setState(() {
+        _uberQuotes = quotes;
+        _fetchingUberQuotes = false;
+      });
+      
+      // Display results
+      if (quotes.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Uber quote: \$${(quotes[0].fee / 100).toStringAsFixed(2)} ${quotes[0].currency}'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No Uber quotes available for this route'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error fetching Uber quotes: $e');
+      setState(() {
+        _fetchingUberQuotes = false;
+      });
+      
+      // Show a more user-friendly error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not get Uber prices. ${e.toString().contains("Connection timeout") ? "Check your internet connection." : ""}'),
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Retry',
+            onPressed: _getUberQuotes,
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -556,26 +629,68 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                     ),
                   ],
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      Icons.directions,
-                      color: Theme.of(context).colorScheme.primary,
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.directions,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Route to $_selectedDestination',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => setState(() {
+                            _selectedDestination = null;
+                            _uberQuotes = null;
+                          }),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Route to $_selectedDestination',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
+                    
+                    // Add Uber quote info
+                    if (_fetchingUberQuotes)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8.0),
+                        child: Center(
+                          child: SizedBox(
+                            height: 24,
+                            width: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      )
+                    else if (_uberQuotes != null && _uberQuotes!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Row(
+                          children: [
+                            // Fix the image path or use icon directly
+                            Icon(
+                              Icons.local_taxi,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Uber: \$${(_uberQuotes![0].fee / 100).toStringAsFixed(2)} ${_uberQuotes![0].currency}',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.secondary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => setState(() => _selectedDestination = null),
-                    ),
                   ],
                 ),
               ),

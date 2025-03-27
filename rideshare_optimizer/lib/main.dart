@@ -607,6 +607,41 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
               ),
             ),
           ),
+          // Location centering button
+          Positioned(
+            right: 16,
+            bottom: MediaQuery.of(context).padding.bottom + 80, // Position above search bar
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(32),
+              child: InkWell(
+                onTap: () {
+                  // Center map on current location
+                  _mapController.move(_currentLocation, 15);
+                },
+                borderRadius: BorderRadius.circular(32),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    Icons.my_location,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+          ),
           // Selected destination overlay
           if (_selectedDestination != null)
             Positioned(

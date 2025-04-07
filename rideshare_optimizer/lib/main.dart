@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
+import 'dart:math';
 import 'theme_provider.dart';
 import 'settings_page.dart';
 import 'services/places_service.dart';
@@ -378,6 +379,8 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
 
   void _selectPlace(NominatimPlace place) {
     final latLng = LatLng(place.lat, place.lon);
+    double zoom = 15 - (log(place.distance!)/log(2));
+    final pos = _mapController.camera.center;
     
     // Debug output
     debugPrint('Selected place: ${place.displayName}');
@@ -390,8 +393,8 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     });
     
     // Move map to selected location
-    _mapController.move(latLng, 15);
-    
+    _mapController.move(pos, zoom);
+
     // Close the bottom sheet
     Navigator.pop(context);
     

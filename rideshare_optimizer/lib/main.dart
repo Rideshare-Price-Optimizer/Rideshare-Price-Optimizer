@@ -1,24 +1,38 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
 import 'theme_provider.dart';
 import 'settings_page.dart';
 import 'services/places_service.dart';
 import 'services/uber_service.dart';
 import 'services/config.dart';
+import 'Database.dart';
 
 void main() async {
   // Ensure Flutter bindings are initialized
   WidgetsFlutterBinding.ensureInitialized();
   
+  //Initialize env File
+  await dotenv.load(fileName: "keys.env");
+
   // Initialize config (this is fast now, no file loading)
   await Config().load();
   debugPrint('Configuration initialized in main');
   
+  // Initialize Supabase 
+  await Supabase.initialize(
+    url: dotenv.env["SUPABASE_URL"]!,
+    anonKey: dotenv.env["SUPABASE_KEY"]!,
+  );
+
+
+
   runApp(
     ChangeNotifierProvider(
       create: (_) => ThemeProvider(),
@@ -434,6 +448,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
             duration: const Duration(seconds: 4),
           ),
         );
+        Database.updateDatabase(quotes[0].fee/100, _currentLocation, _destinationLocation);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -461,6 +476,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
       );
     }
   }
+
 
   @override
   Widget build(BuildContext context) {

@@ -7,23 +7,26 @@ class Database {
 
 static final supabase = Supabase.instance.client;
 
-static Future<void> updateDatabase(double cost, LatLng dropoff, LatLng? pickup) async {
+static Future<void> addRide(double cost, LatLng dropoff, LatLng? pickup) async {
 double destLat = dropoff.latitude;
 double destLong = dropoff.longitude;
 double pickupLat = pickup!.latitude;
 double pickupLong = pickup!.longitude;
 
-await supabase
+
+
+PostgrestList id = await supabase
  .from('ride_endpoints')
- .insert({
-  'start_lat':pickupLat , 
+ .upsert({
+  'start_lat':pickupLat, 
   'start_long':pickupLong,
   'end_lat':destLat,
-  'end_long':destLong,
-  });
+  'end_long':destLong }).select();
+
+var rideId = id.first['ride_id'];
 
  await supabase 
  .from('ride_costs')
- .insert({'cost':cost});
+ .insert({'ride_id':rideId, 'cost':cost});
 }
 }

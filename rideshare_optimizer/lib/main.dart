@@ -12,7 +12,7 @@ import 'settings_page.dart';
 import 'services/places_service.dart';
 import 'services/uber_service.dart';
 import 'services/config.dart';
-import 'Database.dart';
+import 'database.dart';
 
 void main() async {
   // Ensure Flutter bindings are initialized
@@ -448,7 +448,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
             duration: const Duration(seconds: 4),
           ),
         );
-        Database.updateDatabase(quotes[0].fee/100, _currentLocation, _destinationLocation);
+        Database.addRide(quotes[0].fee/100, _currentLocation, _destinationLocation);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

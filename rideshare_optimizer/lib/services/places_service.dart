@@ -24,9 +24,9 @@ class NominatimPlace {
     return NominatimPlace(
       displayName: json['display_name'],
       placeId: json['place_id'].toString(),
-      lat: double.parse(json['lat']),
-      lon: double.parse(json['lon']),
-      type: json['type'],
+      lat: double.parse(json['lat'].toString()),
+      lon: double.parse(json['lon'].toString()),
+      type: json['type'].toString(),
     );
   }
 }

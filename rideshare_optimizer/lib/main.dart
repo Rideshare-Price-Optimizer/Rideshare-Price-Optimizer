@@ -5,11 +5,13 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'theme_provider.dart';
 import 'settings_page.dart';
 import 'services/places_service.dart';
 import 'services/uber_service.dart';
 import 'services/config.dart';
+import 'services/surge_service.dart';
 
 void main() async {
   // Ensure Flutter bindings are initialized
@@ -60,20 +62,31 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   
   // New properties for search functionality
   final PlacesService _placesService = PlacesService();
-  final UberService _uberService = UberService(); // Add this line
+  final UberService _uberService = UberService();
+  final SurgeService _surgeService = SurgeService(); // Add surge service
   List<NominatimPlace> _searchResults = [];
   bool _isLoading = false;
   Timer? _debounceTimer;
   LatLng? _destinationLocation; // To store the selected location coordinates
   
-  // Add this property to store Uber quotes
+  // Add these properties to store Uber quotes and surge information
   List<UberDeliveryQuote>? _uberQuotes;
   bool _fetchingUberQuotes = false;
+  double _surgeMultiplier = 1.0; // Default surge multiplier (no surge)
+  bool _showHeatMap = false; // Don't show the heat map overlay - only use it for calculations
 
   @override
   void initState() {
     super.initState();
     _getCurrentLocation();
+    _initializeSurgeService();
+  }
+  
+  // Initialize the surge service
+  Future<void> _initializeSurgeService() async {
+    await _surgeService.init();
+    // Set the geographic range for the heat map (in km)
+    _surgeService.setRange(5.0);
   }
 
   @override
@@ -399,7 +412,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     _getUberQuotes();
   }
 
-  // Updated method to fetch Uber quotes with better error handling
+  // Updated method to fetch Uber quotes with surge pricing
   Future<void> _getUberQuotes() async {
     if (_destinationLocation == null) return;
     
@@ -416,21 +429,38 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
         ),
       );
       
+      // Get the base quotes
       final quotes = await _uberService.getDeliveryQuotes(
         pickupLocation: _currentLocation,
         dropoffLocation: _destinationLocation!,
       );
+      
+      // Get the surge multiplier for the destination
+      _surgeMultiplier = await _surgeService.getSurgeMultiplier(
+        _destinationLocation!,
+        _currentLocation
+      );
+      
+      debugPrint('Calculated surge multiplier: $_surgeMultiplier');
       
       setState(() {
         _uberQuotes = quotes;
         _fetchingUberQuotes = false;
       });
       
-      // Display results
+      // Display results with surge pricing applied
       if (quotes.isNotEmpty) {
+        // Apply surge pricing to display price
+        final double basePrice = quotes[0].fee / 100;
+        final double surgePrice = basePrice * _surgeMultiplier;
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Uber quote: \$${(quotes[0].fee / 100).toStringAsFixed(2)} ${quotes[0].currency}'),
+            content: Text(
+              _surgeMultiplier > 1.05 
+                ? 'Uber quote: \$${surgePrice.toStringAsFixed(2)} ${quotes[0].currency} (${_surgeMultiplier.toStringAsFixed(1)}x surge)'
+                : 'Uber quote: \$${surgePrice.toStringAsFixed(2)} ${quotes[0].currency}'
+            ),
             duration: const Duration(seconds: 4),
           ),
         );
@@ -479,6 +509,21 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.app',
               ),
+              // Add surge heat map overlay
+              if (_showHeatMap)
+                FutureBuilder<ui.Image>(
+                  future: _surgeService.heatMapImage,
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData || snapshot.hasError) {
+                      return const SizedBox.shrink();
+                    }
+                    return HeatMapLayer(
+                      centerPosition: _currentLocation,
+                      surgeService: _surgeService,
+                      opacity: 0.25, // Reduced opacity to make it very faint
+                    );
+                  },
+                ),
               // Marker layer with both current location and destination (if selected)
               MarkerLayer(
                 markers: [

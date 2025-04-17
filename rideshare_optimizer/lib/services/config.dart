@@ -24,7 +24,7 @@ class Config {
     if (_isLoaded) return;
 
     try {
-      String configContent;
+      String configContent = "";
       if (kIsWeb) {
         // For web, load as asset
         try {
@@ -34,14 +34,68 @@ class Config {
           configContent = '';
         }
       } else {
-        // For mobile, try to load from file
+        // For mobile, try multiple possible locations for the keys.env file
         try {
-          final file = File('keys.env');
-          if (await file.exists()) {
-            configContent = await file.readAsString();
-          } else {
-            // Try loading as asset
-            configContent = await rootBundle.loadString('assets/keys.env');
+          // Try the project directory first (where pubspec.yaml is located)
+          final projectDir = Directory.current.absolute.path;
+          debugPrint('Current directory: $projectDir');
+          
+          // List of possible file locations to try
+          final locations = [
+            // The exact location in GitHub repo
+            '/Users/zacharytgray/Documents/GitHub/Rideshare-Price-Optimizer/rideshare_optimizer/keys.env',
+            // Current directory
+            '$projectDir/keys.env',
+            // One level up
+            '${projectDir}/../keys.env',
+            // Try the standard asset location
+            '$projectDir/lib/keys.env',
+          ];
+          
+          bool fileFound = false;
+          for (final path in locations) {
+            debugPrint('Trying to load keys.env from: $path');
+            final file = File(path);
+            if (await file.exists()) {
+              configContent = await file.readAsString();
+              debugPrint('Successfully loaded keys.env from: $path');
+              fileFound = true;
+              break;
+            }
+          }
+          
+          // If file not found in any location, try as asset
+          if (!fileFound) {
+            debugPrint('Could not find keys.env file, trying as asset');
+            try {
+              // Try without 'assets/' prefix first (as specified in pubspec.yaml)
+              configContent = await rootBundle.loadString('keys.env');
+              debugPrint('Successfully loaded keys.env from Flutter assets');
+            } catch (assetError) {
+              debugPrint('Could not load keys.env directly: $assetError');
+              // Fallback to trying with the 'assets/' prefix
+              try {
+                configContent = await rootBundle.loadString('assets/keys.env');
+                debugPrint('Successfully loaded keys.env from assets/keys.env');
+              } catch (e) {
+                debugPrint('Could not load keys.env from assets either: $e');
+                // Last resort: try to find the keys.env file anywhere in the app bundle
+                try {
+                  final manifestContent = await rootBundle.loadString('AssetManifest.json');
+                  final Map<String, dynamic> manifestMap = json.decode(manifestContent);
+                  final keyFiles = manifestMap.keys.where((String key) => key.contains('keys.env')).toList();
+                  
+                  if (keyFiles.isNotEmpty) {
+                    debugPrint('Found keys.env in manifest at: ${keyFiles.first}');
+                    configContent = await rootBundle.loadString(keyFiles.first);
+                  } else {
+                    debugPrint('No keys.env found in AssetManifest');
+                  }
+                } catch (manifestError) {
+                  debugPrint('Error checking asset manifest: $manifestError');
+                }
+              }
+            }
           }
         } catch (e) {
           debugPrint('Could not load keys.env: $e');
@@ -51,15 +105,22 @@ class Config {
 
       // Parse config content
       if (configContent.isNotEmpty) {
+        debugPrint('Config content found with length: ${configContent.length}');
+        debugPrint('First 10 chars (sanitized): ${configContent.substring(0, configContent.length > 10 ? 10 : configContent.length).replaceAll(RegExp(r'[^\s\w]'), '*')}...');
+        
         final lines = LineSplitter.split(configContent)
             .where((line) => line.trim().isNotEmpty && !line.trim().startsWith('//'));
         
         for (var line in lines) {
+          debugPrint('Processing config line: ${line.length > 10 ? "${line.substring(0, 10)}..." : line}');
           final parts = line.split('=');
           if (parts.length == 2) {
             final key = parts[0].trim();
             final value = parts[1].trim();
             _configValues[key] = value;
+            debugPrint('Added config key: $key with value: ${value.length > 5 ? "${value.substring(0, 5)}***" : "***"}');
+          } else {
+            debugPrint('Invalid config line format: ${line.length > 10 ? "${line.substring(0, 10)}..." : line}');
           }
         }
         
@@ -112,4 +173,23 @@ class Config {
 
   /// Get Uber auth token
   String get uberAuthToken => getValue('UBER_AUTH_TOKEN');
+  
+  /// Debug method to print information about the environment variables
+  void debugEnvironment() {
+    debugPrint('===== Environment Configuration Debug =====');
+    debugPrint('Config loaded: $_isLoaded');
+    debugPrint('Config keys found: ${_configValues.keys.join(', ')}');
+    
+    // Check Uber credentials specifically
+    final customerId = uberCustomerId;
+    final authToken = uberAuthToken;
+    
+    debugPrint('UBER_CUSTOMER_ID is ${customerId.isEmpty ? 'EMPTY' : 'set'} (${customerId.length} chars)');
+    debugPrint('UBER_AUTH_TOKEN is ${authToken.isEmpty ? 'EMPTY' : 'set'} (${authToken.length} chars)');
+    
+    // Check if using defaults
+    debugPrint('Using default UBER_CUSTOMER_ID: ${customerId == _defaultValues['UBER_CUSTOMER_ID']}');
+    debugPrint('Using default UBER_AUTH_TOKEN: ${authToken == _defaultValues['UBER_AUTH_TOKEN']}');
+    debugPrint('=========================================');
+  }
 }

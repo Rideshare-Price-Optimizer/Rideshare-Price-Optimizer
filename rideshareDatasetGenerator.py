@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image
 from scipy.ndimage import gaussian_filter
 
-def generate_blob_image(size=512, num_blobs=10, blur_radius=30):
+def generate_blob_image(size=512, num_blobs=15, blur_radius=8):
     # Create a white background
     image = np.ones((size, size), dtype=np.float32)
     
@@ -71,7 +71,7 @@ def parse_price_multipliers(image_path='random_blobs.png'):
 
 
 if __name__ == "__main__":
-    # generate_blob_image()
-    multipliers = parse_price_multipliers()
-    print(f"Price multiplier at coordinate (100,100): {multipliers[0,0]:.2f}")
-    print(multipliers)
+    generate_blob_image()
+    # multipliers = parse_price_multipliers()
+    # print(f"Price multiplier at coordinate (100,100): {multipliers[0,0]:.2f}")
+    # print(multipliers)

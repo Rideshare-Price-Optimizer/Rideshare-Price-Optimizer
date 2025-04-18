@@ -75,6 +75,23 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   double _surgeMultiplier = 1.0; // Default surge multiplier (no surge)
   bool _showHeatMap = false; // Don't show the heat map overlay - only use it for calculations
 
+  // Method to toggle the surge price heat map overlay
+  void _toggleSurgeHeatMap() {
+    setState(() {
+      _showHeatMap = !_showHeatMap;
+    });
+    
+    // Show a message to the user
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_showHeatMap 
+          ? 'Surge price heat map activated' 
+          : 'Surge price heat map deactivated'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -681,6 +698,39 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                   child: Icon(
                     Icons.my_location,
                     color: Theme.of(context).colorScheme.primary,
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          
+          // Surge Heat Map toggle button - positioned next to the location button
+          Positioned(
+            right: 76, // 16 (edge margin) + 44 (button width) + 16 (spacing)
+            bottom: MediaQuery.of(context).padding.bottom + 80, // Same level as location button
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(32),
+              child: InkWell(
+                onTap: _toggleSurgeHeatMap,
+                borderRadius: BorderRadius.circular(32),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _showHeatMap ? Theme.of(context).colorScheme.primary : Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    Icons.layers,
+                    color: _showHeatMap ? Colors.white : Theme.of(context).colorScheme.primary,
                     size: 24,
                   ),
                 ),

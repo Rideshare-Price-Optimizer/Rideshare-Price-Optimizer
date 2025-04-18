@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:math';
 import 'dart:math' as math;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:provider/provider.dart';
 
 class SurgeService {
   // Singleton instance
@@ -35,7 +38,7 @@ class SurgeService {
     
     try {
       // Load the asset as bytes
-      final ByteData data = await rootBundle.load('assets/random_blobs.jpg');
+      final ByteData data = await rootBundle.load('assets/random_blobs.png');
       final Uint8List bytes = data.buffer.asUint8List();
       
       // Decode the image
@@ -178,8 +181,8 @@ class Math {
   static double sqrt(double value) => math.sqrt(value);
 }
 
-// Custom heat map layer for FlutterMap
-class HeatMapLayer extends StatelessWidget {
+// Custom heat map layer for FlutterMap - uses OverlayImageLayer for proper geo-anchoring
+class HeatMapLayer extends StatefulWidget {
   final LatLng centerPosition;
   final SurgeService surgeService;
   final double opacity;
@@ -192,61 +195,74 @@ class HeatMapLayer extends StatelessWidget {
   }) : super(key: key);
 
   @override
+  State<HeatMapLayer> createState() => _HeatMapLayerState();
+}
+
+class _HeatMapLayerState extends State<HeatMapLayer> {
+  @override
   Widget build(BuildContext context) {
     return FutureBuilder<ui.Image>(
-      future: surgeService.heatMapImage,
+      future: widget.surgeService.heatMapImage,
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.hasError) {
+          debugPrint("HeatMapLayer: Image not available or error: ${snapshot.error}");
           return const SizedBox.shrink();
         }
 
-        return CustomPaint(
-          painter: HeatMapPainter(
-            image: snapshot.data!,
-            centerPosition: centerPosition,
-            surgeService: surgeService,
-            opacity: opacity,
-          ),
-          size: Size.infinite,
+        // Calculate bounds for the heat map overlay based on the center and range
+        // Using a scale factor to make the heat map smaller (0.5 = half the size)
+        final double scaleFactor = 0.5; // Scale down to 50% of original size
+        final double rangeInKm = widget.surgeService._range;
+        final Distance distance = const Distance();
+        
+        // Calculate the bounds (create a square around the center position)
+        final LatLng northEast = distance.offset(
+          widget.centerPosition,
+          rangeInKm * 1000 * scaleFactor / math.sqrt(2),
+          45.0 // Northeast bearing
+        );
+        
+        final LatLng southWest = distance.offset(
+          widget.centerPosition,
+          rangeInKm * 1000 * scaleFactor / math.sqrt(2),
+          225.0 // Southwest bearing
+        );
+        
+        return OverlayImageLayer(
+          overlayImages: [
+            OverlayImage(
+              // Use the bounds calculated from your center position and range
+              bounds: LatLngBounds(
+                northEast,
+                southWest
+              ),
+              opacity: widget.opacity * 2.0,
+              imageProvider: _HeatMapImageProvider(snapshot.data!),
+            ),
+          ],
         );
       },
     );
   }
 }
 
-class HeatMapPainter extends CustomPainter {
+// Custom ImageProvider that converts a ui.Image to an ImageProvider
+class _HeatMapImageProvider extends ImageProvider<_HeatMapImageProvider> {
   final ui.Image image;
-  final LatLng centerPosition;
-  final SurgeService surgeService;
-  final double opacity;
-
-  HeatMapPainter({
-    required this.image,
-    required this.centerPosition,
-    required this.surgeService,
-    required this.opacity,
-  });
-
+  
+  _HeatMapImageProvider(this.image);
+  
   @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..colorFilter = ColorFilter.mode(
-          Colors.blue.withOpacity(opacity), BlendMode.srcATop)
-      ..filterQuality = FilterQuality.medium;
-
-    // Get the map's bounds from its size
-    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
-    canvas.drawImageRect(
-      image,
-      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
-      rect,
-      paint,
-    );
+  Future<_HeatMapImageProvider> obtainKey(ImageConfiguration configuration) {
+    return SynchronousFuture<_HeatMapImageProvider>(this);
   }
-
+  
   @override
-  bool shouldRepaint(HeatMapPainter oldDelegate) {
-    return oldDelegate.centerPosition != centerPosition ||
-           oldDelegate.opacity != opacity;
+  ImageStreamCompleter loadImage(_HeatMapImageProvider key, ImageDecoderCallback decode) {
+    return OneFrameImageStreamCompleter(_loadImage());
+  }
+  
+  Future<ImageInfo> _loadImage() async {
+    return ImageInfo(image: image);
   }
 }

@@ -97,6 +97,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   // Add this list to store the generated walking pickup points
   List<WalkingPickupPoint> _walkingPickupPoints = [];
   bool _fetchingWalkingPoints = false;
+  bool _showWalkingPointsPanel = false; // Track visibility of walking points panel
 
   // Method to toggle the surge price heat map overlay
   void _toggleSurgeHeatMap() {
@@ -440,6 +441,11 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
       _selectedDestination = place.displayName;
       _destinationLocation = latLng;
       _uberQuotes = null; // Reset previous quotes
+      
+      // Reset walking pickup points and related properties
+      _walkingPickupPoints = [];
+      _showWalkingPointsPanel = false;
+      _currentWalkingPointMarker = null;
     });
     
     // Move map to selected location
@@ -945,7 +951,15 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
               child: InkWell(
                 onTap: () {
                   if (_destinationLocation != null) {
-                    _findOptimizedPickupPoints();
+                    // If we already have walking points, just show the panel
+                    if (_walkingPickupPoints.isNotEmpty) {
+                      setState(() {
+                        _showWalkingPointsPanel = true;
+                      });
+                    } else {
+                      // Otherwise, find new pickup points
+                      _findOptimizedPickupPoints();
+                    }
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -1090,7 +1104,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
             ),
 
           // Display walking pickup points panel
-          if (_walkingPickupPoints.isNotEmpty)
+          if (_walkingPickupPoints.isNotEmpty && _showWalkingPointsPanel)
             Positioned(
               left: 16,
               right: 16,
@@ -1136,7 +1150,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                         IconButton(
                           icon: const Icon(Icons.close),
                           onPressed: () => setState(() {
-                            _walkingPickupPoints = [];
+                            _showWalkingPointsPanel = false; // Hide panel instead of clearing points
                           }),
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
@@ -1162,6 +1176,24 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                           final point = _walkingPickupPoints[index];
                           return _buildWalkingPointItem(point, index);
                         },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Add button to generate more walking points
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.add_location_alt),
+                        label: const Text('Find 5 More Walking Locations'),
+                        style: ElevatedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          backgroundColor: Theme.of(context).colorScheme.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: _fetchingWalkingPoints ? null : _addMoreWalkingPoints,
                       ),
                     ),
                   ],
@@ -1307,5 +1339,103 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
         duration: const Duration(seconds: 4),
       ),
     );
+  }
+
+  // Add more walking points to the existing list
+  Future<void> _addMoreWalkingPoints() async {
+    if (_destinationLocation == null) return;
+
+    setState(() {
+      _fetchingWalkingPoints = true;
+    });
+
+    try {
+      // Generate 5 additional random points within 800 meters
+      final List<LatLng> additionalWalkingPoints = await _generateRandomWalkingPoints(5, 800);
+
+      final List<WalkingPickupPoint> newCandidatePoints = [];
+      final Distance distance = const Distance();
+
+      // Process each additional walking point
+      for (int i = 0; i < additionalWalkingPoints.length; i++) {
+        final LatLng point = additionalWalkingPoints[i];
+
+        // Calculate distance from user to this point
+        final double walkingDistance = distance.distance(_currentLocation, point);
+
+        // Calculate surge multiplier at this location
+        final double pointSurgeMultiplier = await _surgeService.getSurgeMultiplier(
+          point,
+          _currentLocation
+        );
+
+        // Get ride quotes from this point to destination
+        List<UberDeliveryQuote> pointQuotes = [];
+        try {
+          pointQuotes = await _uberService.getDeliveryQuotes(
+            pickupLocation: point,
+            dropoffLocation: _destinationLocation!,
+          );
+        } catch (e) {
+          debugPrint('Error getting quotes for additional point $i: $e');
+          continue; // Skip this point if quotes can't be fetched
+        }
+
+        if (pointQuotes.isEmpty) continue;
+
+        // Calculate price with surge for this point
+        final double pointBasePrice = pointQuotes[0].fee / 100;
+        final double pointTotalPrice = pointBasePrice * pointSurgeMultiplier;
+
+        // Get address info for the point
+        String pointAddress = 'Walking Point ${_walkingPickupPoints.length + i + 1}';
+        try {
+          final addressInfo = await _uberService.getAddressFromCoordinates(point);
+          if (addressInfo != null && addressInfo.containsKey('display_name')) {
+            pointAddress = _getMainText(addressInfo['display_name']);
+          }
+        } catch (e) {
+          debugPrint('Error getting address for additional point $i: $e');
+        }
+
+        // Add to new candidate points
+        newCandidatePoints.add(WalkingPickupPoint(
+          location: point,
+          distance: walkingDistance,
+          surgeMultiplier: pointSurgeMultiplier,
+          estimatedPrice: pointTotalPrice,
+          currency: pointQuotes[0].currency,
+          displayName: '$pointAddress (${(walkingDistance).round()}m walk)',
+        ));
+      }
+
+      // Combine with existing walking pickup points and sort by price
+      setState(() {
+        _walkingPickupPoints.addAll(newCandidatePoints);
+        // Re-sort all points by price after adding new ones
+        _walkingPickupPoints.sort((a, b) => a.estimatedPrice.compareTo(b.estimatedPrice));
+        _fetchingWalkingPoints = false;
+        // Ensure the panel is visible
+        _showWalkingPointsPanel = true;
+      });
+
+      // Show a message about the new points
+      if (newCandidatePoints.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Added ${newCandidatePoints.length} more pickup points',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
+    } catch (e) {
+      debugPrint('Error adding more walking points: $e');
+      setState(() {
+        _fetchingWalkingPoints = false;
+      });
+    }
   }
 }

@@ -17,8 +17,12 @@ class SurgeService {
   
   // The loaded heat map image
   ui.Image? _heatMapImage;
-  // Completer to ensure image is loaded
-  final Completer<ui.Image> _imageCompleter = Completer<ui.Image>();
+  // Use a completer that we can reset and recreate when needed
+  Completer<ui.Image>? _imageCompleter;
+  // Track if image is currently loading
+  bool _isLoading = false;
+  // Keep the raw bytes of the image to allow reloading if needed
+  Uint8List? _imageBytes;
   
   // Size of the heat map in pixels
   int get imageWidth => _heatMapImage?.width ?? 0;
@@ -29,34 +33,75 @@ class SurgeService {
   // The size will be determined by the range parameter (in kilometers)
   double _range = 5.0; // Default 5km range
   
-  // Get the image when ready
-  Future<ui.Image> get heatMapImage => _imageCompleter.future;
+  // Get the image when ready - with error handling for disposed images
+  Future<ui.Image> get heatMapImage async {
+    // If we don't have a completer or the image is disposed, reload the image
+    if (_imageCompleter == null || _heatMapImage == null) {
+      await _reloadImage();
+    }
+    
+    try {
+      // Try to clone the image as a simple check if it's still valid
+      if (_heatMapImage != null) {
+        _heatMapImage!.clone();
+      }
+    } catch (e) {
+      // Image was disposed, need to reload
+      debugPrint('Heat map image was disposed, reloading...');
+      await _reloadImage();
+    }
+    
+    return _imageCompleter!.future;
+  }
   
   // Initialize and load the image
   Future<void> init() async {
-    if (_heatMapImage != null) return;
+    await _loadImage();
+  }
+  
+  // Private method to load the image
+  Future<void> _loadImage() async {
+    if (_isLoading) return;
+    _isLoading = true;
     
     try {
-      // Load the asset as bytes
-      final ByteData data = await rootBundle.load('assets/random_blobs.png');
-      final Uint8List bytes = data.buffer.asUint8List();
+      // Load the asset as bytes if we don't have them yet
+      if (_imageBytes == null) {
+        final ByteData data = await rootBundle.load('assets/random_blobs.png');
+        _imageBytes = data.buffer.asUint8List();
+      }
       
       // Decode the image
-      final ui.Codec codec = await ui.instantiateImageCodec(bytes);
+      final ui.Codec codec = await ui.instantiateImageCodec(_imageBytes!);
       final ui.FrameInfo frameInfo = await codec.getNextFrame();
       _heatMapImage = frameInfo.image;
       
-      if (!_imageCompleter.isCompleted) {
-        _imageCompleter.complete(_heatMapImage);
+      // Create a new completer if needed
+      _imageCompleter ??= Completer<ui.Image>();
+      
+      if (!_imageCompleter!.isCompleted) {
+        _imageCompleter!.complete(_heatMapImage);
       }
       
       debugPrint('Heat map image loaded: ${_heatMapImage!.width}x${_heatMapImage!.height}');
     } catch (e) {
       debugPrint('Failed to load heat map image: $e');
-      if (!_imageCompleter.isCompleted) {
-        _imageCompleter.completeError(e);
+      if (_imageCompleter != null && !_imageCompleter!.isCompleted) {
+        _imageCompleter!.completeError(e);
       }
+    } finally {
+      _isLoading = false;
     }
+  }
+  
+  // Method to reload the image if it was disposed
+  Future<void> _reloadImage() async {
+    // Reset the completer
+    _imageCompleter = Completer<ui.Image>();
+    // Reset the image reference
+    _heatMapImage = null;
+    // Load the image again
+    await _loadImage();
   }
   
   // Set the geographic range of the heat map (in kilometers)

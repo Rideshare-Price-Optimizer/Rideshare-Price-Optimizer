@@ -1,0 +1,2 @@
+C:/Users/mbbur/School/SP2025/SeniorSoftware/GitHub/Rideshare-Price-Optimizer/rideshare_optimizer/android/app/.cxx/Debug/145k4hy4/armeabi-v7a/CMakeFiles/edit_cache.dir
+C:/Users/mbbur/School/SP2025/SeniorSoftware/GitHub/Rideshare-Price-Optimizer/rideshare_optimizer/android/app/.cxx/Debug/145k4hy4/armeabi-v7a/CMakeFiles/rebuild_cache.dir

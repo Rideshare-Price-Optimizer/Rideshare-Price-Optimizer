@@ -7,10 +7,18 @@ class SettingsPage extends StatefulWidget {
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
+
+static double getMaxWalkingDist()
+{
+  return _SettingsPageState._maxWalkingDistance;
 }
 
+
+}
+
+
 class _SettingsPageState extends State<SettingsPage> {
-  double _maxWalkingDistance = 1.0; // kilometers
+  static double _maxWalkingDistance = 1.0; // kilometers
   String _selectedLanguage = 'English';
   final List<Color> _themeColors = [
     const Color(0xFF2E7D32), // Forest Green
@@ -19,6 +27,12 @@ class _SettingsPageState extends State<SettingsPage> {
     const Color(0xFFE91E63), // Pink
     const Color(0xFFF57C00), // Orange
   ];
+
+static double getMaxWalkingDist()
+{
+  return _maxWalkingDistance;
+}
+
 
   @override
   Widget build(BuildContext context) {

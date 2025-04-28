@@ -7,7 +7,7 @@ class Database {
 
 static final supabase = Supabase.instance.client;
 
-static Future<void> addRide(double cost, LatLng dropoff, LatLng? pickup) async {
+static Future<void> addRide(double cost, double surgePrice, LatLng dropoff, LatLng? pickup) async {
 double destLat = dropoff.latitude;
 double destLong = dropoff.longitude;
 double pickupLat = pickup!.latitude;
@@ -27,6 +27,6 @@ var rideId = id.first['ride_id'];
 
  await supabase 
  .from('ride_costs')
- .insert({'ride_id':rideId, 'cost':cost});
+ .insert({'ride_id':rideId, 'base_cost':cost, 'surge_price':surgePrice, 'total_price': cost*surgePrice});
 }
 }

@@ -16,6 +16,7 @@ import 'services/uber_service.dart';
 import 'services/config.dart';
 import 'database.dart';
 import 'services/surge_service.dart';
+import 'settings_page.dart';
 
 class WalkingPickupPoint {
   final LatLng location;
@@ -524,7 +525,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
             duration: const Duration(seconds: 4),
           ),
         );
-        Database.addRide(quotes[0].fee/100, _currentLocation, _destinationLocation);
+        Database.addRide(quotes[0].fee/100,_surgeMultiplier, _currentLocation, _destinationLocation);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -563,7 +564,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
       // Generate random angle and distance
       final double angle = random.nextDouble() * 2 * pi;
       // Random distance within the walking radius (50-100% of max radius)
-      final double randomDistance = (0.5 + random.nextDouble() * 0.5) * radiusInMeters;
+      final double randomDistance = (random.nextDouble()) * radiusInMeters;
       
       // Calculate new point
       final LatLng point = distance.offset(
@@ -588,8 +589,8 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     });
     
     try {
-      // Generate 5 random points within 800 meters (reasonable walking distance)
-      final List<LatLng> walkingPoints = await _generateRandomWalkingPoints(5, 800);
+      // Generate 5 random points
+      final List<LatLng> walkingPoints = await _generateRandomWalkingPoints(5, SettingsPage.getMaxWalkingDist()*1000);
       
       // Add the current location as the first point to consider
       walkingPoints.insert(0, _currentLocation);
@@ -626,13 +627,17 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
           debugPrint('Error getting quotes for point $i: $e');
           continue; // Skip this point if quotes can't be fetched
         }
-        
-        if (pointQuotes.isEmpty) continue;
-        
+
         // Calculate price with surge for this point
         final double pointBasePrice = pointQuotes[0].fee / 100;
         final double pointTotalPrice = pointBasePrice * pointSurgeMultiplier;
+        //Add Uber Request To Database
+        Database.addRide(pointBasePrice, pointSurgeMultiplier, point, _destinationLocation);
+
+        if (pointQuotes.isEmpty) continue;
         
+        
+  
         // Get address info for the point
         String pointAddress = 'Walking Point ${i + 1}';
         try {
@@ -1396,12 +1401,15 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
           continue; // Skip this point if quotes can't be fetched
         }
 
-        if (pointQuotes.isEmpty) continue;
-
         // Calculate price with surge for this point
         final double pointBasePrice = pointQuotes[0].fee / 100;
         final double pointTotalPrice = pointBasePrice * pointSurgeMultiplier;
+        //Add Uber Request To Database
+        Database.addRide(pointBasePrice, pointSurgeMultiplier, point, _destinationLocation);
 
+        if (pointQuotes.isEmpty) continue;
+
+        
         // Get address info for the point
         String pointAddress = 'Walking Point ${_walkingPickupPoints.length + i + 1}';
         try {

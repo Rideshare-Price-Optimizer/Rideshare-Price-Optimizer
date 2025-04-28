@@ -7,12 +7,33 @@ import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
+import 'dart:ui' as ui;
+import 'dart:math';
 import 'theme_provider.dart';
 import 'settings_page.dart';
 import 'services/places_service.dart';
 import 'services/uber_service.dart';
 import 'services/config.dart';
 import 'database.dart';
+import 'services/surge_service.dart';
+
+class WalkingPickupPoint {
+  final LatLng location;
+  final double distance; // in meters
+  final double surgeMultiplier;
+  final double estimatedPrice;
+  final String currency;
+  final String displayName;
+
+  WalkingPickupPoint({
+    required this.location,
+    required this.distance,
+    required this.surgeMultiplier,
+    required this.estimatedPrice,
+    required this.currency,
+    required this.displayName,
+  });
+}
 
 void main() async {
   // Ensure Flutter bindings are initialized
@@ -74,20 +95,53 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
   
   // New properties for search functionality
   final PlacesService _placesService = PlacesService();
-  final UberService _uberService = UberService(); // Add this line
+  final UberService _uberService = UberService();
+  final SurgeService _surgeService = SurgeService(); // Add surge service
   List<NominatimPlace> _searchResults = [];
   bool _isLoading = false;
   Timer? _debounceTimer;
   LatLng? _destinationLocation; // To store the selected location coordinates
   
-  // Add this property to store Uber quotes
+  // Add these properties to store Uber quotes and surge information
   List<UberDeliveryQuote>? _uberQuotes;
   bool _fetchingUberQuotes = false;
+  double _surgeMultiplier = 1.0; // Default surge multiplier (no surge)
+  bool _showHeatMap = false; // Don't show the heat map overlay - only use it for calculations
+
+  // Add this list to store the generated walking pickup points
+  List<WalkingPickupPoint> _walkingPickupPoints = [];
+  bool _fetchingWalkingPoints = false;
+  bool _showWalkingPointsPanel = false; // Track visibility of walking points panel
+
+  // Method to toggle the surge price heat map overlay
+  void _toggleSurgeHeatMap() {
+    setState(() {
+      _showHeatMap = !_showHeatMap;
+    });
+    
+    // Show a message to the user
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_showHeatMap 
+          ? 'Surge price heat map activated' 
+          : 'Surge price heat map deactivated'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _getCurrentLocation();
+    _initializeSurgeService();
+  }
+  
+  // Initialize the surge service
+  Future<void> _initializeSurgeService() async {
+    await _surgeService.init();
+    // Set the geographic range for the heat map (in km)
+    _surgeService.setRange(5.0);
   }
 
   @override
@@ -401,6 +455,11 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
       _selectedDestination = place.displayName;
       _destinationLocation = latLng;
       _uberQuotes = null; // Reset previous quotes
+      
+      // Reset walking pickup points and related properties
+      _walkingPickupPoints = [];
+      _showWalkingPointsPanel = false;
+      _currentWalkingPointMarker = null;
     });
     
     // Move map to selected location
@@ -413,7 +472,7 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     _getUberQuotes();
   }
 
-  // Updated method to fetch Uber quotes with better error handling
+  // Updated method to fetch Uber quotes with surge pricing
   Future<void> _getUberQuotes() async {
     if (_destinationLocation == null) return;
     
@@ -430,21 +489,38 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
         ),
       );
       
+      // Get the base quotes
       final quotes = await _uberService.getDeliveryQuotes(
         pickupLocation: _currentLocation,
         dropoffLocation: _destinationLocation!,
       );
+      
+      // Get the surge multiplier for the user's current location (pickup point)
+      _surgeMultiplier = await _surgeService.getSurgeMultiplier(
+        _currentLocation,
+        _currentLocation
+      );
+      
+      debugPrint('Calculated surge multiplier: $_surgeMultiplier');
       
       setState(() {
         _uberQuotes = quotes;
         _fetchingUberQuotes = false;
       });
       
-      // Display results
+      // Display results with surge pricing applied
       if (quotes.isNotEmpty) {
+        // Apply surge pricing to display price
+        final double basePrice = quotes[0].fee / 100;
+        final double surgePrice = basePrice * _surgeMultiplier;
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Uber quote: \$${(quotes[0].fee / 100).toStringAsFixed(2)} ${quotes[0].currency}'),
+            content: Text(
+              _surgeMultiplier > 1.05 
+                ? 'Uber quote: \$${surgePrice.toStringAsFixed(2)} ${quotes[0].currency} (${_surgeMultiplier.toStringAsFixed(1)}x surge)'
+                : 'Uber quote: \$${surgePrice.toStringAsFixed(2)} ${quotes[0].currency}'
+            ),
             duration: const Duration(seconds: 4),
           ),
         );
@@ -477,6 +553,141 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
     }
   }
 
+  // Generate random walking points around the user's current location
+  Future<List<LatLng>> _generateRandomWalkingPoints(int count, double radiusInMeters) async {
+    final List<LatLng> points = [];
+    final Random random = Random();
+    final Distance distance = const Distance();
+    
+    for (int i = 0; i < count; i++) {
+      // Generate random angle and distance
+      final double angle = random.nextDouble() * 2 * pi;
+      // Random distance within the walking radius (50-100% of max radius)
+      final double randomDistance = (0.5 + random.nextDouble() * 0.5) * radiusInMeters;
+      
+      // Calculate new point
+      final LatLng point = distance.offset(
+        _currentLocation,
+        randomDistance,
+        angle * (180 / pi) // Convert to degrees for the offset function
+      );
+      
+      points.add(point);
+    }
+    
+    return points;
+  }
+
+  // Find walking pickup points with better prices
+  Future<void> _findOptimizedPickupPoints() async {
+    if (_destinationLocation == null) return;
+    
+    setState(() {
+      _fetchingWalkingPoints = true;
+      _walkingPickupPoints = [];
+    });
+    
+    try {
+      // Generate 5 random points within 800 meters (reasonable walking distance)
+      final List<LatLng> walkingPoints = await _generateRandomWalkingPoints(5, 800);
+      
+      // Add the current location as the first point to consider
+      walkingPoints.insert(0, _currentLocation);
+      
+      final List<WalkingPickupPoint> candidatePoints = [];
+      final Distance distance = const Distance();
+      
+      // Base quote for comparison
+      final double basePrice = _uberQuotes != null && _uberQuotes!.isNotEmpty 
+          ? _uberQuotes![0].fee / 100 * _surgeMultiplier
+          : 0;
+      
+      // Process each walking point
+      for (int i = 0; i < walkingPoints.length; i++) {
+        final LatLng point = walkingPoints[i];
+        
+        // Calculate distance from user to this point
+        final double walkingDistance = distance.distance(_currentLocation, point);
+        
+        // Calculate surge multiplier at this location
+        final double pointSurgeMultiplier = await _surgeService.getSurgeMultiplier(
+          point,
+          _currentLocation
+        );
+        
+        // Get ride quotes from this point to destination
+        List<UberDeliveryQuote> pointQuotes = [];
+        try {
+          pointQuotes = await _uberService.getDeliveryQuotes(
+            pickupLocation: point,
+            dropoffLocation: _destinationLocation!,
+          );
+        } catch (e) {
+          debugPrint('Error getting quotes for point $i: $e');
+          continue; // Skip this point if quotes can't be fetched
+        }
+        
+        if (pointQuotes.isEmpty) continue;
+        
+        // Calculate price with surge for this point
+        final double pointBasePrice = pointQuotes[0].fee / 100;
+        final double pointTotalPrice = pointBasePrice * pointSurgeMultiplier;
+        
+        // Get address info for the point
+        String pointAddress = 'Walking Point ${i + 1}';
+        try {
+          final addressInfo = await _uberService.getAddressFromCoordinates(point);
+          if (addressInfo != null && addressInfo.containsKey('display_name')) {
+            pointAddress = _getMainText(addressInfo['display_name']);
+          }
+        } catch (e) {
+          debugPrint('Error getting address for point $i: $e');
+        }
+        
+        // Add to candidate points
+        candidatePoints.add(WalkingPickupPoint(
+          location: point,
+          distance: walkingDistance,
+          surgeMultiplier: pointSurgeMultiplier,
+          estimatedPrice: pointTotalPrice,
+          currency: pointQuotes[0].currency,
+          displayName: i == 0 
+            ? 'Current Location (no walking needed)'
+            : '$pointAddress (${(walkingDistance).round()}m walk)',
+        ));
+      }
+      
+      // Sort by price
+      candidatePoints.sort((a, b) => a.estimatedPrice.compareTo(b.estimatedPrice));
+      
+      setState(() {
+        _walkingPickupPoints = candidatePoints;
+        _fetchingWalkingPoints = false;
+      });
+      
+      // Show a message about potential savings
+      if (candidatePoints.isNotEmpty && basePrice > 0) {
+        final double bestPrice = candidatePoints[0].estimatedPrice;
+        final double savings = basePrice - bestPrice;
+        
+        if (savings > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Found a pickup point that saves \$${savings.toStringAsFixed(2)}!',
+              ),
+              duration: const Duration(seconds: 6),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error finding optimized pickup points: $e');
+      setState(() {
+        _fetchingWalkingPoints = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -495,6 +706,21 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.app',
               ),
+              // Add surge heat map overlay
+              if (_showHeatMap)
+                FutureBuilder<ui.Image>(
+                  future: _surgeService.heatMapImage,
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData || snapshot.hasError) {
+                      return const SizedBox.shrink();
+                    }
+                    return HeatMapLayer(
+                      centerPosition: _currentLocation,
+                      surgeService: _surgeService,
+                      opacity: 0.25, // Reduced opacity to make it very faint
+                    );
+                  },
+                ),
               // Marker layer with both current location and destination (if selected)
               MarkerLayer(
                 markers: [
@@ -548,8 +774,46 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                         ),
                       ),
                     ),
+                  // Add walking point marker if selected
+                  if (_currentWalkingPointMarker != null)
+                    Marker(
+                      point: _currentWalkingPointMarker!,
+                      width: 40,
+                      height: 40,
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.directions_walk,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    ),
                 ],
               ),
+              // Add polyline between current location and walking point
+              if (_currentWalkingPointMarker != null)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: [_currentLocation, _currentWalkingPointMarker!],
+                      strokeWidth: 4.0,
+                      color: Colors.green,
+                      isDotted: true,
+                    ),
+                  ],
+                ),
             ],
           ),
           // Settings button
@@ -658,6 +922,91 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
               ),
             ),
           ),
+          
+          // Surge Heat Map toggle button - positioned next to the location button
+          Positioned(
+            right: 76, // 16 (edge margin) + 44 (button width) + 16 (spacing)
+            bottom: MediaQuery.of(context).padding.bottom + 80, // Same level as location button
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(32),
+              child: InkWell(
+                onTap: _toggleSurgeHeatMap,
+                borderRadius: BorderRadius.circular(32),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _showHeatMap ? Theme.of(context).colorScheme.primary : Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    Icons.layers,
+                    color: _showHeatMap ? Colors.white : Theme.of(context).colorScheme.primary,
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          
+          // Walking points optimization button
+          Positioned(
+            right: 136, // 76 (position of surge button) + 44 (button width) + 16 (spacing)
+            bottom: MediaQuery.of(context).padding.bottom + 80, // Same level as location button
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(32),
+              child: InkWell(
+                onTap: () {
+                  if (_destinationLocation != null) {
+                    // If we already have walking points, just show the panel
+                    if (_walkingPickupPoints.isNotEmpty) {
+                      setState(() {
+                        _showWalkingPointsPanel = true;
+                      });
+                    } else {
+                      // Otherwise, find new pickup points
+                      _findOptimizedPickupPoints();
+                    }
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please select a destination first'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                },
+                borderRadius: BorderRadius.circular(32),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    Icons.directions_walk,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+          ),
           // Selected destination overlay
           if (_selectedDestination != null)
             Positioned(
@@ -732,11 +1081,33 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                               color: Theme.of(context).colorScheme.primary,
                             ),
                             const SizedBox(width: 8),
-                            Text(
-                              'Uber: \$${(_uberQuotes![0].fee / 100).toStringAsFixed(2)} ${_uberQuotes![0].currency}',
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.secondary,
-                                fontWeight: FontWeight.bold,
+                            Expanded(
+                              child: RichText(
+                                text: TextSpan(
+                                  children: [
+                                    TextSpan(
+                                      text: 'Uber: ',
+                                      style: TextStyle(
+                                        color: Theme.of(context).colorScheme.secondary,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    TextSpan(
+                                      text: '\$${(_uberQuotes![0].fee / 100).toStringAsFixed(2)} × ${_surgeMultiplier.toStringAsFixed(1)} = ',
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    TextSpan(
+                                      text: '\$${((_uberQuotes![0].fee / 100) * _surgeMultiplier).toStringAsFixed(2)} ${_uberQuotes![0].currency}',
+                                      style: const TextStyle(
+                                        color: Colors.black,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ],
@@ -746,8 +1117,340 @@ class _PriceOptimizerScreenState extends State<PriceOptimizerScreen> {
                 ),
               ),
             ),
+
+          // Display walking pickup points panel
+          if (_walkingPickupPoints.isNotEmpty && _showWalkingPointsPanel)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: MediaQuery.of(context).padding.bottom + 80, // Above the search bar
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.directions_walk,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Optimized Pickup Points',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => setState(() {
+                            _showWalkingPointsPanel = false; // Hide panel instead of clearing points
+                          }),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Walk to these pickup points to save money:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // List of walking points
+                    SizedBox(
+                      height: 200, // Fixed height for scrollable list
+                      child: ListView.builder(
+                        itemCount: _walkingPickupPoints.length,
+                        padding: EdgeInsets.zero,
+                        itemBuilder: (context, index) {
+                          final point = _walkingPickupPoints[index];
+                          return _buildWalkingPointItem(point, index);
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Add button to generate more walking points
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.add_location_alt),
+                        label: const Text('Find 5 More Walking Locations'),
+                        style: ElevatedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          backgroundColor: Theme.of(context).colorScheme.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: _fetchingWalkingPoints ? null : _addMoreWalkingPoints,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          
+          // Loading indicator for walking points
+          if (_fetchingWalkingPoints)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withOpacity(0.3),
+                child: const Center(
+                  child: Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(),
+                          SizedBox(height: 16),
+                          Text('Finding optimized pickup points...'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
+  }
+
+  // New method to build walking point item
+  Widget _buildWalkingPointItem(WalkingPickupPoint point, int index) {
+    final bool isBestOption = index == 0;
+    
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: isBestOption ? Colors.green[50] : null,
+      child: InkWell(
+        onTap: () {
+          // Move the map to this pickup point
+          _mapController.move(point.location, 16);
+          // Show marker for this walking point
+          _showWalkingPointMarker(point);
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isBestOption 
+                    ? Colors.green[100] 
+                    : Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.directions_walk,
+                  color: isBestOption 
+                    ? Colors.green[800] 
+                    : Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      point.displayName,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: isBestOption ? Colors.green[800] : null,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.arrow_downward,
+                          color: Colors.green,
+                          size: 16,
+                        ),
+                        Text(
+                          ' ${point.surgeMultiplier.toStringAsFixed(1)}x surge',
+                          style: TextStyle(
+                            color: Colors.green[700],
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Spacer(),
+                        Text(
+                          '\$${point.estimatedPrice.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            color: isBestOption ? Colors.green[800] : Colors.black,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  // Variable to track the currently shown walking point marker
+  LatLng? _currentWalkingPointMarker;
+  
+  // Show marker for the selected walking point
+  void _showWalkingPointMarker(WalkingPickupPoint point) {
+    setState(() {
+      _currentWalkingPointMarker = point.location;
+    });
+    
+    // Show a line connecting current location to the walking point
+    _drawWalkingPathToPoint(point);
+  }
+  
+  // Draw a walking path from current location to pickup point
+  void _drawWalkingPathToPoint(WalkingPickupPoint point) {
+    // In a real app, you might want to use a routing API to get the actual walking path
+    // For now, we'll just show a straight line
+    
+    // Show a message about the walking distance
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Walk ${(point.distance).round()} meters to save \$${(_uberQuotes != null && _uberQuotes!.isNotEmpty ? (_uberQuotes![0].fee / 100 * _surgeMultiplier) - point.estimatedPrice : 0).toStringAsFixed(2)}',
+        ),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  // Add more walking points to the existing list
+  Future<void> _addMoreWalkingPoints() async {
+    if (_destinationLocation == null) return;
+
+    setState(() {
+      _fetchingWalkingPoints = true;
+    });
+
+    try {
+      // Generate 5 additional random points within 800 meters
+      final List<LatLng> additionalWalkingPoints = await _generateRandomWalkingPoints(5, 800);
+
+      final List<WalkingPickupPoint> newCandidatePoints = [];
+      final Distance distance = const Distance();
+
+      // Process each additional walking point
+      for (int i = 0; i < additionalWalkingPoints.length; i++) {
+        final LatLng point = additionalWalkingPoints[i];
+
+        // Calculate distance from user to this point
+        final double walkingDistance = distance.distance(_currentLocation, point);
+
+        // Calculate surge multiplier at this location
+        final double pointSurgeMultiplier = await _surgeService.getSurgeMultiplier(
+          point,
+          _currentLocation
+        );
+
+        // Get ride quotes from this point to destination
+        List<UberDeliveryQuote> pointQuotes = [];
+        try {
+          pointQuotes = await _uberService.getDeliveryQuotes(
+            pickupLocation: point,
+            dropoffLocation: _destinationLocation!,
+          );
+        } catch (e) {
+          debugPrint('Error getting quotes for additional point $i: $e');
+          continue; // Skip this point if quotes can't be fetched
+        }
+
+        if (pointQuotes.isEmpty) continue;
+
+        // Calculate price with surge for this point
+        final double pointBasePrice = pointQuotes[0].fee / 100;
+        final double pointTotalPrice = pointBasePrice * pointSurgeMultiplier;
+
+        // Get address info for the point
+        String pointAddress = 'Walking Point ${_walkingPickupPoints.length + i + 1}';
+        try {
+          final addressInfo = await _uberService.getAddressFromCoordinates(point);
+          if (addressInfo != null && addressInfo.containsKey('display_name')) {
+            pointAddress = _getMainText(addressInfo['display_name']);
+          }
+        } catch (e) {
+          debugPrint('Error getting address for additional point $i: $e');
+        }
+
+        // Add to new candidate points
+        newCandidatePoints.add(WalkingPickupPoint(
+          location: point,
+          distance: walkingDistance,
+          surgeMultiplier: pointSurgeMultiplier,
+          estimatedPrice: pointTotalPrice,
+          currency: pointQuotes[0].currency,
+          displayName: '$pointAddress (${(walkingDistance).round()}m walk)',
+        ));
+      }
+
+      // Combine with existing walking pickup points and sort by price
+      setState(() {
+        _walkingPickupPoints.addAll(newCandidatePoints);
+        // Re-sort all points by price after adding new ones
+        _walkingPickupPoints.sort((a, b) => a.estimatedPrice.compareTo(b.estimatedPrice));
+        _fetchingWalkingPoints = false;
+        // Ensure the panel is visible
+        _showWalkingPointsPanel = true;
+      });
+
+      // Show a message about the new points
+      if (newCandidatePoints.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Added ${newCandidatePoints.length} more pickup points',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
+    } catch (e) {
+      debugPrint('Error adding more walking points: $e');
+      setState(() {
+        _fetchingWalkingPoints = false;
+      });
+    }
   }
 }

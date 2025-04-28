@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image
 from scipy.ndimage import gaussian_filter
 
-def generate_blob_image(size=512, num_blobs=10, blur_radius=30):
+def generate_blob_image(size=512, num_blobs=15, blur_radius=8):
     # Create a white background
     image = np.ones((size, size), dtype=np.float32)
     
@@ -40,16 +40,16 @@ def generate_blob_image(size=512, num_blobs=10, blur_radius=30):
     
 def pixel_to_multiplier(pixel_value):
     """
-    Convert a grayscale pixel value (0-255) to a price multiplier (0.5-1.5)
+    Convert a grayscale pixel value (0-255) to a price multiplier (1.0-3.0)
     Dark areas will have higher multipliers, light areas will have lower multipliers
     """
     # Normalize pixel value to 0-1 range and invert
     normalized = 1 - (pixel_value / 255.0)
-    # Map 0-1 range to 0.5-1.5 range
-    multiplier = 0.5 + normalized
+    # Map 0-1 range to 1.0-3.0 range
+    multiplier = 1.0 + normalized * 2.0
     return multiplier
 
-def parse_price_multipliers(image_path='random_blobs3.jpg'):
+def parse_price_multipliers(image_path='random_blobs.png'):
     """
     Parse the generated image and return a 2D array of price multipliers
     """
@@ -71,7 +71,7 @@ def parse_price_multipliers(image_path='random_blobs3.jpg'):
 
 
 if __name__ == "__main__":
-    # generate_blob_image()
-    multipliers = parse_price_multipliers()
+    generate_blob_image()
+    # multipliers = parse_price_multipliers()
     # print(f"Price multiplier at coordinate (100,100): {multipliers[0,0]:.2f}")
-    print(multipliers)
+    # print(multipliers)

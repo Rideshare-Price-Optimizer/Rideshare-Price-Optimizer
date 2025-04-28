@@ -115,6 +115,9 @@ class UberService {
     String? dropoffPhoneNumber,
   }) async {
     try {
+      // Debug environment variables to diagnose the issue
+      Config().debugEnvironment();
+      
       // Check if credentials are available
       if (_customerId.isEmpty || _authToken.isEmpty) {
         debugPrint('Uber API credentials not found. Using mock data.');
@@ -150,6 +153,12 @@ class UberService {
         'dropoff_phone_number': dropoffPhoneNumber ?? '+15555555555',
         'manifest_total_value': 1000,
       };
+      
+      final token = _authToken;
+      final maskedToken = token.length > 10 
+        ? "${token.substring(0, 4)}...${token.substring(token.length - 4)}" 
+        : "***";
+      debugPrint('Using Auth: Bearer $maskedToken');
 
       debugPrint('Request URL: $_baseUrl/customers/$_customerId/delivery_quotes');
       //https://api.uber.com/v1/customers/{402fc759-a21a-46ac-b4b5-4ae63b181245}/delivery_quotes
